@@ -7,8 +7,11 @@
 //
 
 import UIKit
+import CloudKit
 
 class QueueTableViewController: UITableViewController {
+    
+    var records = [CKRecord]()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -27,20 +30,99 @@ class QueueTableViewController: UITableViewController {
     
     @IBAction func subscribeButtonTapped() {
         
+        let predicate = NSPredicate(format: "wasAnswered == 0")
+        
+        let subscription = CKSubscription(recordType: "Question", predicate: predicate, options: CKSubscriptionOptions.FiresOnRecordCreation)
+        
+        let notificationInfo = CKNotificationInfo()
+        notificationInfo.shouldSendContentAvailable = true
+        notificationInfo.desiredKeys = ["body", "studentName"]
+        
+        subscription.notificationInfo = notificationInfo
+        
+        CKContainer.defaultContainer().publicCloudDatabase.saveSubscription(subscription) { (subscription, error) -> Void in
+            if let error = error {
+                // really sweet error handling
+                print("error _ \(error.localizedDescription)")
+            } else {
+                print(subscription)
+            }
+        }
+    }
+    
+    override func viewWillAppear(animated: Bool) {
+        super.viewWillAppear(animated)
+        
+        fetchCurrentQueue { (success) -> Void in
+            print("did we succede? _. \(success)")
+            
+            if success {
+                
+                dispatch_async(dispatch_get_main_queue(), { () -> Void in
+                    self.tableView.reloadData()
+                })
+            }
+        }
+    }
+    
+    func fetchCurrentQueue(completion: (success: Bool) -> Void) {
+        let publicDatabase = CKContainer.defaultContainer().publicCloudDatabase
+        
+        let predicate = NSPredicate(format: "wasAnswered == 0")
+        
+        let query = CKQuery(recordType: "Question", predicate: predicate)
+        
+        publicDatabase.performQuery(query, inZoneWithID: nil) { (recordsReturned, error) -> Void in
+            
+            if error == nil {
+                guard let recordsReturned = recordsReturned else { completion(success: false); return }
+                
+                let orderedRecords = recordsReturned.sort({
+                    
+                    let date0 = $0.creationDate ?? NSDate()
+                    let date1 = $1.creationDate ?? NSDate()
+                    
+                    return date0.timeIntervalSinceDate(date1) <= 0
+                })
+                
+                self.records = orderedRecords
+                print(self.records)
+                completion(success: true)
+                
+            } else {
+                // super awesome error handling
+                print("error - \(error?.localizedDescription)")
+                completion(success: false)
+            }
+        }
     }
 
     // MARK: - Table view data source
 
     override func tableView(tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // #warning Incomplete implementation, return the number of rows
-        return 0
+        return records.count
     }
 
     
     override func tableView(tableView: UITableView, cellForRowAtIndexPath indexPath: NSIndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCellWithIdentifier("subtitleCell", forIndexPath: indexPath)
-
-        // Configure the cell...
+        let record = records[indexPath.row]
+        
+        cell.textLabel?.text = record["body"] as? String
+        
+        var detailText = record["studentName"] as? String ?? "(No Name)"
+        detailText = detailText + " - "
+        
+        if let creationDate = record.creationDate {
+            let dateFomatter = NSDateFormatter()
+            dateFomatter.timeStyle = .ShortStyle
+            dateFomatter.dateStyle = .ShortStyle
+            
+            detailText = detailText + dateFomatter.stringFromDate(creationDate)
+        }
+        
+        cell.detailTextLabel?.text = detailText
 
         return cell
     }
